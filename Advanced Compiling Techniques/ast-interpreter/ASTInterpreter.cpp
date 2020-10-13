@@ -71,26 +71,9 @@ public:
   }
 };
 
-std::string exec(const char* cmd) {
-    FILE* pipe = popen(cmd, "r");
-    if (!pipe) return "ERROR";
-    char buffer[128];
-    std::string result = "";
-    while(!feof(pipe)) {
-        if(fgets(buffer, 128, pipe) != NULL)
-            result += buffer;
-    }
-    pclose(pipe);
-    return result;
-}
 
 int main (int argc, char ** argv) {
    if (argc > 1) {
-       std::cout<<argv[1]<<std::endl;
-
-       std::string s=exec(argv[1]);
-       std::cout<<s<<std::endl;
-
-       clang::tooling::runToolOnCode(std::unique_ptr<clang::FrontendAction>(new InterpreterClassAction), s);
+       clang::tooling::runToolOnCode(std::unique_ptr<clang::FrontendAction>(new InterpreterClassAction), argv[1]);
    }
 }
