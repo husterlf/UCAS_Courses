@@ -13,6 +13,7 @@
 #define DECL_DEFAULT_VALUE 0
 
 using namespace clang;
+using namespace std;
 
 class StackFrame
 {
@@ -23,8 +24,11 @@ class StackFrame
 	/// The current stmt
 	Stmt *mPC;
 
-	int mReturnType=-1;
-	int64_t mReturnValue=0;
+	int mReturnType = -1;
+	int64_t mReturnValue = 0;
+
+	//
+	vector<vector<int>> mVecs;
 
 public:
 	StackFrame() : mVars(), mExprs(), mPC()
@@ -57,13 +61,31 @@ public:
 	{
 		return mPC;
 	}
-	void setReturn(int64_t val){
+	void setReturn(int64_t val)
+	{
 		//mReturnType=type;
-		mReturnValue=val;
+		mReturnValue = val;
 	}
 
-	int64_t getReturnValue(){
+	int64_t getReturnValue()
+	{
 		return mReturnValue;
+	}
+	void createIntVec(int size)
+	{
+		mVecs.push_back(vector<int>(size));
+	}
+	int getLastVecLoc()
+	{
+		return mVecs.size();
+	}
+	void setVecValue(int loc, int offset, int val)
+	{
+		mVecs[loc - 1][offset] = val;
+	}
+	int getVecValue(int loc, int offset)
+	{
+		return mVecs[loc - 1][offset];
 	}
 };
 
@@ -80,7 +102,7 @@ public:
 
 class Environment
 {
-	std::vector<StackFrame> mStack;
+	vector<StackFrame> mStack;
 
 	FunctionDecl *mFree; /// Declartions to the built-in functions
 	FunctionDecl *mMalloc;
@@ -154,30 +176,25 @@ public:
 
 			if (DeclRefExpr *declexpr = dyn_cast<DeclRefExpr>(left))
 			{
-				if (auto intLiteral = dyn_cast<IntegerLiteral>(right))
-				{ //right is Interger Type
-					int val = intLiteral->getValue().getSExtValue();
-					mStack.back().bindStmt(left, val);
-					Decl *decl = declexpr->getFoundDecl();
-					mStack.back().bindDecl(decl, val);
-				}
-				else if (auto callType = dyn_cast<CallExpr>(right))
-				{
-					int val = mStack.back().getStmtVal(right);
-					mStack.back().bindStmt(left, val);
-					Decl *decl = declexpr->getFoundDecl();
-					mStack.back().bindDecl(decl, val);
-				}
-				else
-				{
-					//bind 0 if not include
-					mStack.back().bindStmt(left, 0);
-					Decl *decl = declexpr->getFoundDecl();
-					mStack.back().bindDecl(decl, 0);
-				}
+				int64_t val = expr(right);
+				mStack.back().bindStmt(left, val);
+				Decl *decl = declexpr->getFoundDecl();
+				mStack.back().bindDecl(decl, val);
+			
 			}
-			else
-			{
+			else if (auto arraySubscript = dyn_cast<ArraySubscriptExpr>(left))
+			{ //left is arraysubscript
+				//int a [] 4;
+				cout << "ArraySubscript" << endl;
+				int64_t index = expr(arraySubscript->getRHS());
+				cout << "index: " << index << endl;
+				if (DeclRefExpr *declexpr = dyn_cast<DeclRefExpr>(arraySubscript->getLHS()->IgnoreImpCasts()))
+				{
+					Decl *decl = declexpr->getFoundDecl();
+					int loc = mStack.back().getDeclVal(decl);
+					int val = expr(right);
+					mStack.back().setVecValue(loc, index, val);
+				}
 			}
 		}
 		else
@@ -188,13 +205,33 @@ public:
 			case BO_GT:
 				result = expr(left) > expr(right);
 				break;
+			case BO_LT:
+				result = expr(left) < expr(right);
+				break;
+			case BO_LE:
+				result = expr(left) <= expr(right);
+				break;
+			case BO_GE:
+				result = expr(left) >= expr(right);
+				break;
+			case BO_EQ:
+				result = expr(left) == expr(right);
+				break;
+			case BO_NE:
+				result = expr(left) != expr(right);
+				break;
 			case BO_Add:
 				result = expr(left) + expr(right);
 				break;
 			case BO_Sub:
 				result = expr(left) - expr(right);
 				break;
-
+			case BO_Mul:
+				result = expr(left) * expr(right);
+				break;
+			case BO_Div:
+				result = expr(left) / expr(right);
+				break;
 			default:
 				//undefined bop
 				break;
@@ -204,6 +241,24 @@ public:
 		}
 	}
 
+	void unaryop(UnaryOperator *op, int64_t &val)
+	{
+		Expr *subExpr = op->getSubExpr();
+		switch (op->getOpcode())
+		{
+		case UO_Minus:
+			val = -1 * expr(subExpr);
+			break;
+		case UO_Plus:
+			val = expr(subExpr);
+			break;
+		case UO_Deref:
+			break;
+
+		default:
+			break;
+		}
+	}
 	void decl(DeclStmt *declstmt)
 	{
 		for (DeclStmt::decl_iterator it = declstmt->decl_begin(), ie = declstmt->decl_end();
@@ -212,15 +267,35 @@ public:
 			Decl *decl = *it;
 			if (VarDecl *vardecl = dyn_cast<VarDecl>(decl))
 			{
-				if (vardecl->hasInit()) //add init handler,only for int
+				if (vardecl->getType().getTypePtr()->isIntegerType())
 				{
-					if (auto intLiteral = dyn_cast<IntegerLiteral>(vardecl->getInit()))
-						mStack.back().bindDecl(vardecl, intLiteral->getValue().getSExtValue());
+					if (vardecl->hasInit()) //add init handler,only for int
+					{
+						if (auto intLiteral = dyn_cast<IntegerLiteral>(vardecl->getInit()))
+							mStack.back().bindDecl(vardecl, intLiteral->getValue().getSExtValue());
+					} 
+					else
+					{
+						//default value
+						mStack.back().bindDecl(vardecl, DECL_DEFAULT_VALUE);
+					}
 				}
-				else
+				else if (vardecl->getType().getTypePtr()->isArrayType())
 				{
-					//default value
-					mStack.back().bindDecl(vardecl, DECL_DEFAULT_VALUE);
+					//
+					std::cout << "Array Type" << std::endl;
+					if (auto array = dyn_cast<ConstantArrayType>(vardecl->getType().getTypePtr()))
+					{
+						int64_t size = array->getSize().getSExtValue();
+						if (array->getElementType().getTypePtr()->isIntegerType())
+						{
+							if (!vardecl->hasInit())
+							{ //the homework hasn't init situation
+								mStack.back().createIntVec(size);
+								mStack.back().bindDecl(vardecl, mStack.back().getLastVecLoc());
+							}
+						}
+					}
 				}
 			}
 		}
@@ -235,13 +310,25 @@ public:
 			int val = mStack.back().getDeclVal(decl);
 			mStack.back().bindStmt(declref, val);
 		}
+		else if (declref->getType()->isArrayType())
+		{
+			cout << "declref array type" << endl;
+
+			/*Decl *decl = declref->getFoundDecl();
+
+			int val = mStack.back().getDeclVal(decl);
+			mStack.back().bindStmt(declref, val);*/
+		}
+		else
+		{
+		}
 	}
 
 	void cast(CastExpr *castexpr)
 	{
 		mStack.back().setPC(castexpr);
 		if (castexpr->getType()->isIntegerType())
-		{
+		{ 
 			Expr *expr = castexpr->getSubExpr();
 			int val = mStack.back().getStmtVal(expr);
 			mStack.back().bindStmt(castexpr, val);
@@ -260,7 +347,7 @@ public:
 	/// !TODO Support Function Call
 	void callBuiltIn(CallExpr *callexpr)
 	{
-		std::cout << "callBuiltIn" << std::endl;
+		//std::cout << "callBuiltIn" << std::endl;
 		mStack.back().setPC(callexpr);
 		int val = 0;
 		FunctionDecl *callee = callexpr->getDirectCallee();
@@ -286,7 +373,7 @@ public:
 	}
 	void callCustom(CallExpr *callexpr)
 	{
-		std::vector<int64_t> args;
+		vector<int64_t> args;
 
 		for (auto i = callexpr->arg_begin(), e = callexpr->arg_end(); i != e; i++)
 		{
@@ -317,7 +404,7 @@ public:
 	void returnstmt(ReturnStmt *stmt)
 	{
 		int64_t value = expr(stmt->getRetValue());
-		
+
 		mStack.back().setReturn(value);
 	}
 
@@ -325,28 +412,50 @@ public:
 	{
 		exp = exp->IgnoreImpCasts();
 		if (auto intLiteral = dyn_cast<IntegerLiteral>(exp))
-		{
+		{ // 1;
 			llvm::APInt result = intLiteral->getValue();
 			return result.getSExtValue();
 		}
 		else if (auto callExpr = dyn_cast<CallExpr>(exp))
-		{
+		{ // f();
 			return mStack.back().getStmtVal(callExpr);
 		}
-		else if (auto declRef = dyn_cast<DeclRefExpr>(exp))
-		{
-			declref(declRef);
-			int64_t result = mStack.back().getStmtVal(declRef);
-			return result;
-		}
 		else if (auto binaryExpr = dyn_cast<BinaryOperator>(exp))
-		{ //+ - * / < > ==
+		{ //+ - * / < > == expr
 			binop(binaryExpr);
 			int64_t result = mStack.back().getStmtVal(binaryExpr);
 			return result;
 		}
+		else if (auto declRef = dyn_cast<DeclRefExpr>(exp))
+		{ // a
+			declref(declRef);
+			int64_t result = mStack.back().getStmtVal(declRef);
+			return result;
+		}
+		else if (auto unaryExpr = dyn_cast<UnaryOperator>(exp))
+		{
+
+			int64_t result;
+			unaryop(unaryExpr, result);
+			return result;
+		}
+		else if (auto arraySubscript = dyn_cast<ArraySubscriptExpr>(exp))
+		{
+			int64_t result;
+			int64_t index = expr(arraySubscript->getRHS());
+			if (DeclRefExpr *declexpr = dyn_cast<DeclRefExpr>(arraySubscript->getLHS()->IgnoreImpCasts()))
+			{
+				Decl *decl = declexpr->getFoundDecl();
+				int loc = mStack.back().getDeclVal(decl);
+				result=mStack.back().getVecValue(loc,index);
+				 
+			}
+			return result;
+		}
 		else
 		{
+			//bind 0 if not include
+			return 0;
 		}
 	}
 };
