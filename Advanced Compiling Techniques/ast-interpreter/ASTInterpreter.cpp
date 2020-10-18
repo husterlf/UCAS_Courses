@@ -22,7 +22,7 @@ public:
    virtual void VisitBinaryOperator(BinaryOperator *bop)
    {
       VisitStmt(bop);
-      mEnv->binop(bop); 
+      mEnv->binop(bop);
    }
    virtual void VisitDeclRefExpr(DeclRefExpr *expr)
    {
@@ -39,25 +39,23 @@ public:
       VisitStmt(call);
       if (mEnv->isBuiltInFunc(call))
          mEnv->callBuiltIn(call);
-      else{
-         if(FunctionDecl *fdecl=call->getDirectCallee()){
-            //custom func with a new stack 
+      else
+      {
+         if (FunctionDecl *fdecl = call->getDirectCallee())
+         {
+            //custom func with a new stack
             mEnv->callCustom(call);
             Visit(fdecl->getBody());
-            if(!fdecl->isNoReturn()){
+            if (!fdecl->isNoReturn())
+            {
                int64_t retvalue = mEnv->getCallReturn();
                mEnv->callCustomFinished();
-               mEnv->pushStmVal(call,retvalue);
+               mEnv->pushStmVal(call, retvalue);
             }
             else
                mEnv->callCustomFinished();
-
          }
-
-         
-         
       }
-         
    }
    virtual void VisitDeclStmt(DeclStmt *declstmt)
    {
@@ -74,35 +72,40 @@ public:
       if (mEnv->expr(cond))
       { // Current cond is True
          Stmt *thenstmt = ifstmt->getThen();
-         Visit(thenstmt); 
+         Visit(thenstmt);
       }
       else
       {
          if (ifstmt->getElse())
-         {//find next Cond
+         { //find next Cond
             Stmt *elsestmt = ifstmt->getElse();
             Visit(elsestmt);
          }
       }
    }
 
-   virtual void VisitWhileStmt(WhileStmt *stmt){
+   virtual void VisitWhileStmt(WhileStmt *stmt)
+   {
       //std::cout<<"while stms:"<<std::endl;
-      Expr *cond=stmt->getCond();
-      while(mEnv->expr(cond)){
+      Expr *cond = stmt->getCond();
+      while (mEnv->expr(cond))
+      {
          Visit(stmt->getBody());
       }
-
    }
 
-   virtual void VisitForStmt(ForStmt *stmt){
+   virtual void VisitForStmt(ForStmt *stmt)
+   {
       //Init,Cond,Inc   Body
-      Visit(stmt->getInit());
-      while(mEnv->expr(stmt->getCond())){
+      Stmt *initStmt=stmt->getInit();
+      if(initStmt)
+         Visit(initStmt);
+      while (mEnv->expr(stmt->getCond()))
+      {
          Visit(stmt->getBody());
          Visit(stmt->getInc());
       }
-      int kk=0;
+      int kk = 0;
    }
 
 private:
@@ -122,7 +125,7 @@ public:
    {
       TranslationUnitDecl *decl = Context.getTranslationUnitDecl();
       mEnv.init(decl);
-      
+
       FunctionDecl *entry = mEnv.getEntry();
       mVisitor.VisitStmt(entry->getBody());
    }

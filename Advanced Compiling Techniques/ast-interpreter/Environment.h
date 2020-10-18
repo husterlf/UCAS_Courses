@@ -19,15 +19,15 @@ class StackFrame
 {
 	/// StackFrame maps Variable Declaration to Value
 	/// Which are either integer or addresses (also represented using an Integer value)
-	std::map<Decl *, int> mVars;
-	std::map<Stmt *, int> mExprs;
+	std::map<Decl *, int64_t> mVars;
+	std::map<Stmt *, int64_t> mExprs;
 	/// The current stmt
 	Stmt *mPC;
 
 	int mReturnType = -1;
 	int64_t mReturnValue = 0;
 
-	//
+	//only for int vec
 	vector<vector<int>> mVecs;
 
 public:
@@ -35,21 +35,25 @@ public:
 	{
 	}
 
-	void bindDecl(Decl *decl, int val)
+	void bindDecl(Decl *decl, int64_t val)
 	{
 		mVars[decl] = val;
 	}
-	int getDeclVal(Decl *decl)
+	int64_t getDeclVal(Decl *decl)
 	{
+		if(mVars.find(decl) == mVars.end())
+			return 0;
 		assert(mVars.find(decl) != mVars.end());
 		return mVars.find(decl)->second;
 	}
-	void bindStmt(Stmt *stmt, int val)
+	void bindStmt(Stmt *stmt, int64_t val)
 	{
 		mExprs[stmt] = val;
 	}
-	int getStmtVal(Stmt *stmt)
+	int64_t getStmtVal(Stmt *stmt)
 	{
+		if (mExprs.find(stmt) == mExprs.end())
+			return 0;
 		assert(mExprs.find(stmt) != mExprs.end());
 		return mExprs[stmt];
 	}
@@ -71,6 +75,8 @@ public:
 	{
 		return mReturnValue;
 	}
+
+	//for int vec
 	void createIntVec(int size)
 	{
 		mVecs.push_back(vector<int>(size));
@@ -90,15 +96,34 @@ public:
 };
 
 /// Heap maps address to a value
-/*
+
 class Heap {
 public:
-   int Malloc(int size) ;
-   void Free (int addr) ;
-   void Update(int addr, int val) ;
-   int get(int addr);
+   int Malloc(int size) 
+   {
+	   int * p=(int *)malloc(size);
+	   mPoints[off++]=p;
+	   return off-1;
+   }
+   void Free (int heap_loc) 
+   {
+	   int *p=mPoints[heap_loc];
+	   free(p);
+	   mPoints.erase(heap_loc);
+   }
+   void Update(int heap_loc,int offset, int val){
+	   int *p=mPoints[heap_loc];
+	   *(p+offset)=val;
+   }
+   int get(int heap_loc,int offset=0)
+   {
+	   int *p=mPoints[heap_loc];
+	   return *(p+offset);
+   }
+private:
+	int off=0;
+	map<int,int *> mPoints;
 };
-*/
 
 class Environment
 {
@@ -180,7 +205,6 @@ public:
 				mStack.back().bindStmt(left, val);
 				Decl *decl = declexpr->getFoundDecl();
 				mStack.back().bindDecl(decl, val);
-			
 			}
 			else if (auto arraySubscript = dyn_cast<ArraySubscriptExpr>(left))
 			{ //left is arraysubscript
@@ -191,10 +215,19 @@ public:
 				if (DeclRefExpr *declexpr = dyn_cast<DeclRefExpr>(arraySubscript->getLHS()->IgnoreImpCasts()))
 				{
 					Decl *decl = declexpr->getFoundDecl();
-					int loc = mStack.back().getDeclVal(decl);
-					int val = expr(right);
+					int64_t loc = mStack.back().getDeclVal(decl);
+					int64_t val = expr(right);
 					mStack.back().setVecValue(loc, index, val);
 				}
+			}
+			else if(auto unaryExpr=dyn_cast<UnaryOperator>(left)){
+				// *p
+				int64_t val = expr(right);
+                int64_t addr = expr(unaryExpr->getSubExpr());
+                int64_t *p = (int64_t *)addr;
+                *p = val;
+				
+				//mStack.back().bindStmt(left,val);
 			}
 		}
 		else
@@ -252,7 +285,13 @@ public:
 		case UO_Plus:
 			val = expr(subExpr);
 			break;
-		case UO_Deref:
+		case UO_Deref:{
+			//*
+			int64_t pVal=expr(subExpr);
+			int64_t *p=(int64_t *)pVal;
+			val=*(p);
+		}
+		
 			break;
 
 		default:
@@ -268,12 +307,12 @@ public:
 			if (VarDecl *vardecl = dyn_cast<VarDecl>(decl))
 			{
 				if (vardecl->getType().getTypePtr()->isIntegerType())
-				{
+				{//int a;
 					if (vardecl->hasInit()) //add init handler,only for int
 					{
 						if (auto intLiteral = dyn_cast<IntegerLiteral>(vardecl->getInit()))
 							mStack.back().bindDecl(vardecl, intLiteral->getValue().getSExtValue());
-					} 
+					}
 					else
 					{
 						//default value
@@ -281,8 +320,7 @@ public:
 					}
 				}
 				else if (vardecl->getType().getTypePtr()->isArrayType())
-				{
-					//
+				{//int a[3];
 					std::cout << "Array Type" << std::endl;
 					if (auto array = dyn_cast<ConstantArrayType>(vardecl->getType().getTypePtr()))
 					{
@@ -297,6 +335,25 @@ public:
 						}
 					}
 				}
+				else if(vardecl->getType().getTypePtr()->isPointerType())
+				{//int* a;
+					cout<<"pointer type"<<endl;
+					if (auto pointer = dyn_cast<PointerType>(vardecl->getType().getTypePtr()))
+					{
+						
+						if (!vardecl->hasInit())
+						{ //the homework hasn't init situation for pointer
+						  //pointer default null
+						    int *new_p=NULL;
+							mStack.back().bindDecl(vardecl,(int64_t) new_p);
+						}
+						
+					}
+				}
+				else
+				{//other type
+
+				}
 			}
 		}
 	}
@@ -307,20 +364,25 @@ public:
 		{
 			Decl *decl = declref->getFoundDecl();
 
-			int val = mStack.back().getDeclVal(decl);
+			int64_t val = mStack.back().getDeclVal(decl);
 			mStack.back().bindStmt(declref, val);
 		}
 		else if (declref->getType()->isArrayType())
 		{
 			cout << "declref array type" << endl;
+		}
+		else if(declref->getType()->isPointerType())
+		{
+			Decl *decl = declref->getFoundDecl();
+            int64_t val = mStack.back().getDeclVal(decl);
+            mStack.back().bindStmt(declref, val);
+		}
+		else{
 
 			/*Decl *decl = declref->getFoundDecl();
-
-			int val = mStack.back().getDeclVal(decl);
-			mStack.back().bindStmt(declref, val);*/
-		}
-		else
-		{
+            int64_t val = mStack.back().getDeclVal(decl);
+			int64_t vval=mStack.back().getStmtVal(declref);*/
+			
 		}
 	}
 
@@ -328,10 +390,24 @@ public:
 	{
 		mStack.back().setPC(castexpr);
 		if (castexpr->getType()->isIntegerType())
-		{ 
+		{
 			Expr *expr = castexpr->getSubExpr();
-			int val = mStack.back().getStmtVal(expr);
+			int64_t val = mStack.back().getStmtVal(expr);
 			mStack.back().bindStmt(castexpr, val);
+		}
+		else if(castexpr->getType()->isPointerType()){
+			cout<<"cast isPointerType"<<endl;
+			/*Expr *exprr = castexpr->getSubExpr();
+			Decl *decl = exprr->getReferencedDeclOfCallee();
+			//int64_t vval=getDeclVal(decl);
+			if(auto declExpr=dyn_cast<DeclRefExpr>(castexpr))
+			{
+				Decl *decl = declExpr->getFoundDecl();
+				int64_t kk=mStack.back().getDeclVal(decl);
+			}
+			int64_t val = mStack.back().getStmtVal(exprr);
+			int64_t kk=mStack.back().getDeclVal(decl);
+			mStack.back().bindStmt(castexpr, val);*/
 		}
 	}
 
@@ -349,7 +425,7 @@ public:
 	{
 		//std::cout << "callBuiltIn" << std::endl;
 		mStack.back().setPC(callexpr);
-		int val = 0;
+		int64_t val = 0;
 		FunctionDecl *callee = callexpr->getDirectCallee();
 		if (callee == mInput)
 		{
@@ -361,15 +437,24 @@ public:
 		else if (callee == mOutput)
 		{
 			Expr *decl = callexpr->getArg(0); //获取第一个参数
-			val = mStack.back().getStmtVal(decl);
-			llvm::errs() << val;
+			int64_t vvv=expr(decl);
+
+			llvm::errs() << vvv;  
+
 		}
-		else if (callee == mMalloc)
-		{
-		}
-		else if (callee == mFree)
-		{
-		}
+		 else if (callee == mMalloc)
+        {
+            int64_t mallocSize = expr(callexpr->getArg(0));
+            int64_t *p = (int64_t *)std::malloc(mallocSize);
+			cout<<(int64_t)p<<endl;
+            mStack.back().bindStmt(callexpr, (int64_t)p);
+        }
+        else if (callee == mFree)
+        {
+            int64_t *p = (int64_t *)expr(callexpr->getArg(0));
+			int64_t pp=(int64_t) p;
+            std::free(p);
+        }
 	}
 	void callCustom(CallExpr *callexpr)
 	{
@@ -433,7 +518,7 @@ public:
 			return result;
 		}
 		else if (auto unaryExpr = dyn_cast<UnaryOperator>(exp))
-		{
+		{//- +
 
 			int64_t result;
 			unaryop(unaryExpr, result);
@@ -446,12 +531,35 @@ public:
 			if (DeclRefExpr *declexpr = dyn_cast<DeclRefExpr>(arraySubscript->getLHS()->IgnoreImpCasts()))
 			{
 				Decl *decl = declexpr->getFoundDecl();
-				int loc = mStack.back().getDeclVal(decl);
-				result=mStack.back().getVecValue(loc,index);
-				 
+				int64_t loc = mStack.back().getDeclVal(decl);
+				result = mStack.back().getVecValue(loc, index);
 			}
 			return result;
 		}
+		else if (auto parenExpr = dyn_cast<ParenExpr>(exp))
+        { // (E)
+            cout<<"parenExpr type"<<endl;
+			return expr(parenExpr->getSubExpr());
+        }
+		else if (auto sizeofExpr = dyn_cast<UnaryExprOrTypeTraitExpr>(exp))
+        {
+			cout<<"sizeofexpr type"<<endl;
+			if(sizeofExpr->getKind()==UETT_SizeOf){
+				if (sizeofExpr->getArgumentType()->isIntegerType())
+                {
+                    return sizeof(int64_t); // 8 byte
+                }
+                else if (sizeofExpr->getArgumentType()->isPointerType())
+                {
+                    return sizeof(int64_t *); // 8 byte
+                }
+			}
+		}
+		else if (auto castExpr = dyn_cast<CStyleCastExpr>(exp))
+        {
+			cout<<"castexpr type"<<endl;
+            return expr(castExpr->getSubExpr());
+        }
 		else
 		{
 			//bind 0 if not include
