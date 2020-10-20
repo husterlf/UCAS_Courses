@@ -21,21 +21,29 @@ public:
 
    virtual void VisitBinaryOperator(BinaryOperator *bop)
    {
+      if (mEnv->isReturned())
+         return;
       VisitStmt(bop);
       mEnv->binop(bop);
    }
    virtual void VisitDeclRefExpr(DeclRefExpr *expr)
    {
+      if (mEnv->isReturned())
+         return;
       VisitStmt(expr);
       mEnv->declref(expr);
    }
    virtual void VisitCastExpr(CastExpr *expr)
    {
+      if (mEnv->isReturned())
+         return;
       VisitStmt(expr);
       mEnv->cast(expr);
    }
    virtual void VisitCallExpr(CallExpr *call)
    {
+      if (mEnv->isReturned())
+         return;
       VisitStmt(call);
       if (mEnv->isBuiltInFunc(call))
          mEnv->callBuiltIn(call);
@@ -46,28 +54,34 @@ public:
             //custom func with a new stack
             mEnv->callCustom(call);
             Visit(fdecl->getBody());
-            if (!fdecl->isNoReturn())
+            if (fdecl->isNoReturn())
+               mEnv->callCustomFinished();
+            else
             {
-               int64_t retvalue = mEnv->getCallReturn();
+               int retvalue = mEnv->getCallReturn();
                mEnv->callCustomFinished();
                mEnv->pushStmVal(call, retvalue);
             }
-            else
-               mEnv->callCustomFinished();
          }
       }
    }
    virtual void VisitDeclStmt(DeclStmt *declstmt)
    {
+      if (mEnv->isReturned())
+         return;
       mEnv->decl(declstmt);
    }
    virtual void VisitReturnStmt(ReturnStmt *returnStmt)
    {
+      if (mEnv->isReturned())
+         return;
       Visit(returnStmt->getRetValue());
       mEnv->returnstmt(returnStmt);
    }
    virtual void VisitIfStmt(IfStmt *ifstmt)
    {
+      if (mEnv->isReturned())
+         return;
       Expr *cond = ifstmt->getCond();
       if (mEnv->expr(cond))
       { // Current cond is True
@@ -86,6 +100,8 @@ public:
 
    virtual void VisitWhileStmt(WhileStmt *stmt)
    {
+      if (mEnv->isReturned())
+         return;
       //std::cout<<"while stms:"<<std::endl;
       Expr *cond = stmt->getCond();
       while (mEnv->expr(cond))
@@ -96,9 +112,11 @@ public:
 
    virtual void VisitForStmt(ForStmt *stmt)
    {
+      if (mEnv->isReturned())
+         return;
       //Init,Cond,Inc   Body
-      Stmt *initStmt=stmt->getInit();
-      if(initStmt)
+      Stmt *initStmt = stmt->getInit();
+      if (initStmt)
          Visit(initStmt);
       while (mEnv->expr(stmt->getCond()))
       {
@@ -166,12 +184,17 @@ int main(int argc, char **argv)
 {
    if (argc > 1)
    {
-      std::cout << "input param: " << argv[1] << std::endl;
+      /*std::cout << "input param: " << argv[1] << std::endl;
 
       std::string s = exec(argv[1]);
       std::cout << "code content: \n\n"
                 << s << std::endl;
 
       clang::tooling::runToolOnCode(std::unique_ptr<clang::FrontendAction>(new InterpreterClassAction), s);
+*/
+      if (argc > 1)
+      {
+         clang::tooling::runToolOnCode(std::unique_ptr<clang::FrontendAction>(new InterpreterClassAction), argv[1]);
+      }
    }
 }
