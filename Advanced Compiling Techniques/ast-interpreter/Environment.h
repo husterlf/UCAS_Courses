@@ -577,11 +577,11 @@ public:
 			if(sizeofExpr->getKind()==UETT_SizeOf){
 				if (sizeofExpr->getArgumentType()->isIntegerType())
                 {
-                    return sizeof(int); // 8 byte
+                    return sizeof(int); 
                 }
                 else if (sizeofExpr->getArgumentType()->isPointerType())
                 {
-                    return sizeof(int *); // 8 byte
+                    return sizeof(int *); 
                 }
 			}
 		}
