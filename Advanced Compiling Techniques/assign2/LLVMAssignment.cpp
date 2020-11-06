@@ -32,6 +32,13 @@
 
 #include <llvm/Bitcode/BitcodeReader.h>
 #include <llvm/Bitcode/BitcodeWriter.h>
+#include <llvm/Analysis/DominanceFrontier.h>
+
+#include<string>
+#include<map>
+#include<vector>
+
+using namespace std;
 
 using namespace llvm;
 static ManagedStatic<LLVMContext> GlobalContext;
@@ -63,13 +70,16 @@ struct FuncPtrPass : public ModulePass
   static char ID; // Pass identification, replacement for typeid
   FuncPtrPass() : ModulePass(ID) {}
 
+  map<int,vector<string>> results;
+  vector<string> names;
+
   bool runOnModule(Module &M) override
   {
+    //直接调用函数时的输出
     errs() << "Module Name: ";
     errs().write_escaped(M.getName()) << '\n';
     int count = 0;
     //iterator funcs
-
     for (auto fi = M.begin(); fi != M.end(); ++fi)
     {
       Function &f = *fi;
@@ -81,38 +91,55 @@ struct FuncPtrPass : public ModulePass
           if (CallInst *call_inst = dyn_cast<CallInst>(ii))
           {
             ++count;
-            Function *f_call = call_inst->getCalledFunction();//call func directly
-            
+            Function *f_call = call_inst->getCalledFunction();
+
+            unsigned line = call_inst->getDebugLoc().getLine();
+            if (line != 0)
+              {
+                if(results.count(line)==0)
+                {
+                  vector<string> names;
+                  results[line]=names;
+                }
+              }
+
             if (f_call != NULL)
             {
-              unsigned line = call_inst->getDebugLoc().getLine();
-              if(line!=0)
-                errs() << line << ":" << f_call->getName() << "\n";
+              //call func directly
+              if (line != 0)
+              {
+                errs() << line << ":"<<f_call->getName()<<"\n";
+                results[line].push_back(f_call->getName());
+              }
+                
             }
             else
-            {//value level 
-              unsigned line = call_inst->getDebugLoc().getLine();
-              Value *v=call_inst->getCalledValue();
-              errs()<<"line: "<<line<<"  v's type: "<<v->getType()<<"\n";
+            {
+              // value level
+              // unsigned line = call_inst->getDebugLoc().getLine();
+              Value *v = call_inst->getCalledValue();
+              errs() << line << ":"; //<< "  v's type: " << v->getType() << "\n";
               //PHINode,Argument,CallInst
-              if(PHINode *phi=dyn_cast<PHINode>(v))
+              if (PHINode *phi = dyn_cast<PHINode>(v))
               {
-
+                //PHI node,contains combine SSA
+                //errs() << "phi \n";
+                //errs()<<phi->getNumOperands()<<"\n";
+                callPHINode(phi);
               }
-              else if(Argument *arg=dyn_cast<Argument>(v))
+              else if (Argument *arg = dyn_cast<Argument>(v))
               {
-
+                callArgument(arg);
               }
-              else if(CallInst *call=dyn_cast<CallInst>(v))
+              else if (CallInst *call = dyn_cast<CallInst>(v))
+              {//
+                callCallIns(call);
+              }
+              else
               {
-                
+                errs() << "other value type:" << v->getType() << "\n";
               }
-              else{
-                errs()<<"other value type:"<<v->getType()<<"\n";
-              }
-              
             }
-            
           }
         }
       }
@@ -126,10 +153,11 @@ struct FuncPtrPass : public ModulePass
     }*/
 
     //M.dump();
-    //M.print(llvm::outs(), nullptr);
+    //errs() << "------------------------------\n";
+    // M.print(llvm::outs(), nullptr);
     M.size();
 
-    M.getDataLayout();
+   // M.getDataLayout();
     errs() << "------------------------------\n";
     return false; //return false if only analyse
   }
@@ -140,6 +168,177 @@ struct FuncPtrPass : public ModulePass
     //AU.addRequired
     AU.setPreservesCFG();
   }
+
+  //
+  void callPHINode(PHINode *phi)
+  {
+    for (auto op = phi->op_begin(); op != phi->op_end(); ++op)
+    {
+      if (auto tmp1 = dyn_cast<PHINode>(op))
+      {
+        callPHINode(tmp1);
+      }
+      else if (auto tmp2 = dyn_cast<Argument>(op))
+      {
+        callArgument(tmp2);
+      }
+      else if (auto tmp3 = dyn_cast<Function>(op))
+      {
+        //errs()<<"tmp3\n";
+        string strTmp=(op==(phi->op_end()-1))?"":",";
+        errs() << tmp3->getName() <<strTmp;
+      }
+      else
+      {
+        if(op==(phi->op_end()-1))
+        {
+          string strTmp=",";
+          errs() <<"NULL";
+        }
+        
+      }
+
+      if(op==(phi->op_end()-1))
+        errs()<<"\n";
+    }
+  }
+
+  void callArgument(Argument *arg)
+  {
+    //func trans by args
+    unsigned int argIndex = arg->getArgNo();
+    Function *fParent = arg->getParent();
+    //errs()<<argIndex;
+    //errs()<<fParent->getName()<<"\n";
+    //for(auto ui=funcParent->use_begin();ui!=funcParent)
+
+    for (User *funcUser : fParent->users())
+    {
+      if (CallInst *callInst = dyn_cast<CallInst>(funcUser))
+      {
+        // if argument at 3 , then foo(arg1,arg2) will be pass
+        if (argIndex + 1 <= callInst->getNumArgOperands())
+        {
+          Value *value = callInst->getArgOperand(argIndex);
+          if (callInst->getCalledFunction() != fParent)
+          { // é€’å½’é—®é¢˜
+            Function *func = callInst->getCalledFunction();
+            for (Function::iterator bi = func->begin(), be = func->end(); bi != be; bi++)
+            {
+              // for instruction in basicblock
+              for (BasicBlock::iterator ii = bi->begin(), ie = bi->end(); ii != ie; ii++)
+              {
+                Instruction *inst = dyn_cast<Instruction>(ii);
+                if (ReturnInst *retInst = dyn_cast<ReturnInst>(inst))
+                {
+                  Value *v = retInst->getReturnValue();
+                  if (CallInst *call_inst = dyn_cast<CallInst>(v))
+                  {
+                    Value *value = call_inst->getArgOperand(argIndex);
+                    if (Argument *argument = dyn_cast<Argument>(value))
+                    {
+                      callArgument(argument);
+                    }
+                  }
+                }
+              }
+            }
+          }
+          else
+          {
+            handleValue(value);
+          }
+        }
+      }
+      else if (PHINode *phiNode = dyn_cast<PHINode>(funcUser))
+      {
+        for (User *phiUser : phiNode->users())
+        {
+          if (CallInst *callInst = dyn_cast<CallInst>(phiUser))
+          {
+            if (argIndex + 1 <= callInst->getNumArgOperands())
+            {
+              Value *value = callInst->getArgOperand(argIndex);
+              handleValue(value);
+            }
+          }
+        }
+      }
+    }
+  
+  }
+
+  void callCallIns(CallInst *call)
+  {
+    Function *f_call=call->getFunction();
+    if(f_call)
+    {
+      errs()<<f_call->getName()<<"\n";
+      //
+    }
+    else
+    {
+      Value *v=call->getCalledValue();
+      if(PHINode *phi=dyn_cast<PHINode>(v))
+      {
+        for(auto op=phi->op_begin();op!=phi->op_end();++op)
+        {
+          if(Function *f=dyn_cast<Function>(op))
+          {
+            errs()<<f->getName()<<"\n";
+          }
+        }
+      }
+    }
+    
+  }
+
+  void handleValue(Value *val)
+  {
+    if (PHINode *tmp1 = dyn_cast<PHINode>(val))
+    {
+      callPHINode(tmp1);
+    }
+    else if (Function *tmp2 = dyn_cast<Function>(val))
+    {
+      errs()<<tmp2->getName();
+      //Push(func->getName());
+    }
+    else if (Argument *tmp3 = dyn_cast<Argument>(val))
+    {
+      callArgument(tmp3);
+    }
+  }
+
+
+  void handleFunc(Function *func)
+  {
+    for (auto bi = func->begin(); bi != func->end();  ++bi)
+    {
+      for (auto ii = bi->begin(); ii!= bi->end(); ++ii)
+      {
+        Instruction *inst = dyn_cast<Instruction>(ii);
+        if (ReturnInst *retInst = dyn_cast<ReturnInst>(inst))
+        {
+          Value *value = retInst->getReturnValue();
+          if (Argument *argument = dyn_cast<Argument>(value))
+          {
+            callArgument(argument);
+          }
+          else if (PHINode *pHINode = dyn_cast<PHINode>(value))
+          {
+            callPHINode(pHINode);
+          }
+          else if (CallInst *callIns = dyn_cast<CallInst>(value))
+          {
+            callCallIns(callIns);
+          }
+        }
+      }
+    }
+  }
+
+
 };
 
 char FuncPtrPass::ID = 0;
