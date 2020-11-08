@@ -36,7 +36,7 @@
 
 #include <string>
 #include <map>
-#include <vector>
+#include <set>
 
 using namespace std;
 
@@ -70,20 +70,22 @@ struct FuncPtrPass : public ModulePass
   static char ID; // Pass identification, replacement for typeid
   FuncPtrPass() : ModulePass(ID) {}
 
-  map<int, vector<string>> results;
-  vector<string> names;
+  map<int, set<string>> results;
+  set<string> names;
 
   void printResults()
   {
     for(auto it=results.begin();it!=results.end();++it)
     {
       errs()<<it->first<<":";
-      int vecSize=it->second.size();
-      for(int i=0;i<vecSize;++i)
+      int tmpSize=it->second.size();
+      for(auto it1=it->second.begin();it1!=it->second.end();++it1)
       {
-        errs()<<it->second[i];
-        if(i!=vecSize-1)
-        errs()<<",";
+        errs()<<*it1;
+
+        --tmpSize;
+        if(tmpSize>0)
+          errs()<<",";
       }
 
       errs()<<"\n";
@@ -123,8 +125,8 @@ struct FuncPtrPass : public ModulePass
               { //"llvm.dbg.value" is only in line 0 AND f_call!=NULL
                 //So the below code is for directly func call
                // errs() << line << ":" << f_call->getName() << "\n";
-                vector<string> tmp;
-                tmp.push_back(f_call->getName());
+                set<string> tmp;
+                tmp.insert(f_call->getName());
                 results[line]=tmp;
               }
             }
@@ -207,7 +209,7 @@ struct FuncPtrPass : public ModulePass
       }
       else if (auto tmp3 = dyn_cast<Function>(op))
       {
-        names.push_back(tmp3->getName()); 
+        names.insert(tmp3->getName()); 
       }
       else
       {
@@ -231,25 +233,20 @@ struct FuncPtrPass : public ModulePass
     //func trans by args
     unsigned int argIndex = arg->getArgNo();
     Function *fParent = arg->getParent();
-    //errs()<<argIndex;
-    //errs()<<fParent->getName()<<"\n";
-    //for(auto ui=funcParent->use_begin();ui!=funcParent)
 
     for (User *funcUser : fParent->users())
     {
       if (CallInst *callInst = dyn_cast<CallInst>(funcUser))
       {
-        // if argument at 3 , then foo(arg1,arg2) will be pass
-        if (argIndex + 1 <= callInst->getNumArgOperands())
-        {
+
           Value *value = callInst->getArgOperand(argIndex);
           if (callInst->getCalledFunction() != fParent)
           { 
             Function *func = callInst->getCalledFunction();
-            for (Function::iterator bi = func->begin(), be = func->end(); bi != be; bi++)
+            for (auto bi = func->begin();bi!= func->end();++bi)
             {
               // for instruction in basicblock
-              for (BasicBlock::iterator ii = bi->begin(), ie = bi->end(); ii != ie; ii++)
+              for (auto ii = bi->begin();ii != bi->end();++ii)
               {
                 Instruction *inst = dyn_cast<Instruction>(ii);
                 if (ReturnInst *retInst = dyn_cast<ReturnInst>(inst))
@@ -271,7 +268,6 @@ struct FuncPtrPass : public ModulePass
           {
             handleValue(value);
           }
-        }
       }
       else if (PHINode *phiNode = dyn_cast<PHINode>(funcUser))
       {
@@ -279,11 +275,9 @@ struct FuncPtrPass : public ModulePass
         {
           if (CallInst *callInst = dyn_cast<CallInst>(phiUser))
           {
-            if (argIndex + 1 <= callInst->getNumArgOperands())
-            {
+
               Value *value = callInst->getArgOperand(argIndex);
               handleValue(value);
-            }
           }
         }
       }
@@ -292,10 +286,12 @@ struct FuncPtrPass : public ModulePass
 
   void callCallIns(CallInst *call)
   {
-    Function *f_call = call->getFunction();
+    Function *f_call = call->getCalledFunction();//pointer func type
     if (f_call)
     {
-      names.push_back(f_call->getName());
+      names.insert(f_call->getName());
+      handleFunc(f_call);
+
     }
     else
     {
@@ -306,7 +302,8 @@ struct FuncPtrPass : public ModulePass
         {
           if (Function *f = dyn_cast<Function>(op))
           {
-            names.push_back(f->getName());
+            //names.insert(f->getName());
+            handleFunc(f);
           }
         }
       }
@@ -321,7 +318,7 @@ struct FuncPtrPass : public ModulePass
     }
     else if (Function *tmp2 = dyn_cast<Function>(val))
     {
-      names.push_back(tmp2->getName());
+      names.insert(tmp2->getName());
     }
     else if (Argument *tmp3 = dyn_cast<Argument>(val))
     {
@@ -331,6 +328,8 @@ struct FuncPtrPass : public ModulePass
 
   void handleFunc(Function *func)
   {
+    if(func==NULL)
+      return;
     for (auto bi = func->begin(); bi != func->end(); ++bi)
     {
       for (auto ii = bi->begin(); ii != bi->end(); ++ii)
