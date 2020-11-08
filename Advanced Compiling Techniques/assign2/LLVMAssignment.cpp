@@ -34,9 +34,9 @@
 #include <llvm/Bitcode/BitcodeWriter.h>
 #include <llvm/Analysis/DominanceFrontier.h>
 
-#include<string>
-#include<map>
-#include<vector>
+#include <string>
+#include <map>
+#include <vector>
 
 using namespace std;
 
@@ -70,12 +70,34 @@ struct FuncPtrPass : public ModulePass
   static char ID; // Pass identification, replacement for typeid
   FuncPtrPass() : ModulePass(ID) {}
 
-  map<int,vector<string>> results;
+  map<int, vector<string>> results;
   vector<string> names;
+
+  void printResults()
+  {
+    for(auto it=results.begin();it!=results.end();++it)
+    {
+      errs()<<it->first<<":";
+      int vecSize=it->second.size();
+      for(int i=0;i<vecSize;++i)
+      {
+        errs()<<it->second[i];
+        if(i!=vecSize-1)
+        errs()<<",";
+      }
+
+      errs()<<"\n";
+    }
+  }
 
   bool runOnModule(Module &M) override
   {
-    //直接调用函数时的输出
+    //target:
+    //1.print line and func name if direct call
+    //2.print the possible called func name
+    //3.print the direct call func if it is determined
+    //exp:do not consider func pointer is stored into memory
+
     errs() << "Module Name: ";
     errs().write_escaped(M.getName()) << '\n';
     int count = 0;
@@ -89,36 +111,30 @@ struct FuncPtrPass : public ModulePass
         for (auto ii = b.begin(); ii != b.end(); ++ii)
         {
           if (CallInst *call_inst = dyn_cast<CallInst>(ii))
-          {
+          { //target instruction
             ++count;
             Function *f_call = call_inst->getCalledFunction();
 
             unsigned line = call_inst->getDebugLoc().getLine();
-            if (line != 0)
-              {
-                if(results.count(line)==0)
-                {
-                  vector<string> names;
-                  results[line]=names;
-                }
-              }
 
             if (f_call != NULL)
             {
-              //call func directly
               if (line != 0)
-              {
-                errs() << line << ":"<<f_call->getName()<<"\n";
-                results[line].push_back(f_call->getName());
+              { //"llvm.dbg.value" is only in line 0 AND f_call!=NULL
+                //So the below code is for directly func call
+               // errs() << line << ":" << f_call->getName() << "\n";
+                vector<string> tmp;
+                tmp.push_back(f_call->getName());
+                results[line]=tmp;
               }
-                
             }
             else
             {
+              
               // value level
               // unsigned line = call_inst->getDebugLoc().getLine();
               Value *v = call_inst->getCalledValue();
-              errs() << line << ":"; //<< "  v's type: " << v->getType() << "\n";
+              //errs() << line << ":"; //<< "  v's type: " << v->getType() << "\n";
               //PHINode,Argument,CallInst
               if (PHINode *phi = dyn_cast<PHINode>(v))
               {
@@ -132,12 +148,18 @@ struct FuncPtrPass : public ModulePass
                 callArgument(arg);
               }
               else if (CallInst *call = dyn_cast<CallInst>(v))
-              {//
+              { //
                 callCallIns(call);
               }
               else
               {
                 errs() << "other value type:" << v->getType() << "\n";
+              }
+
+              if(!names.empty())
+              {
+                results[line]=names;
+                names.clear();
               }
             }
           }
@@ -145,6 +167,7 @@ struct FuncPtrPass : public ModulePass
       }
     }
 
+    printResults();
     //iterator global var
     /*for (Module::global_iterator gi = M.global_begin(), ge = M.global_end(); gi != ge; gi++)
     {
@@ -157,7 +180,7 @@ struct FuncPtrPass : public ModulePass
     // M.print(llvm::outs(), nullptr);
     M.size();
 
-   // M.getDataLayout();
+    // M.getDataLayout();
     errs() << "------------------------------\n";
     return false; //return false if only analyse
   }
@@ -184,22 +207,22 @@ struct FuncPtrPass : public ModulePass
       }
       else if (auto tmp3 = dyn_cast<Function>(op))
       {
-        //errs()<<"tmp3\n";
-        string strTmp=(op==(phi->op_end()-1))?"":",";
-        errs() << tmp3->getName() <<strTmp;
+        names.push_back(tmp3->getName()); 
       }
       else
       {
-        if(op==(phi->op_end()-1))
+        if (op == (phi->op_end() - 1))
         {
-          string strTmp=",";
-          errs() <<"NULL";
+          string strTmp = ",";
+          //errs() << "NULL";
         }
-        
       }
 
-      if(op==(phi->op_end()-1))
-        errs()<<"\n";
+      if (op == (phi->op_end() - 1))
+      {
+        //errs() << "\n";
+      }
+        
     }
   }
 
@@ -221,7 +244,7 @@ struct FuncPtrPass : public ModulePass
         {
           Value *value = callInst->getArgOperand(argIndex);
           if (callInst->getCalledFunction() != fParent)
-          { // é€’å½’é—®é¢˜
+          { 
             Function *func = callInst->getCalledFunction();
             for (Function::iterator bi = func->begin(), be = func->end(); bi != be; bi++)
             {
@@ -265,32 +288,29 @@ struct FuncPtrPass : public ModulePass
         }
       }
     }
-  
   }
 
   void callCallIns(CallInst *call)
   {
-    Function *f_call=call->getFunction();
-    if(f_call)
+    Function *f_call = call->getFunction();
+    if (f_call)
     {
-      errs()<<f_call->getName()<<"\n";
-      //
+      names.push_back(f_call->getName());
     }
     else
     {
-      Value *v=call->getCalledValue();
-      if(PHINode *phi=dyn_cast<PHINode>(v))
+      Value *v = call->getCalledValue();
+      if (PHINode *phi = dyn_cast<PHINode>(v))
       {
-        for(auto op=phi->op_begin();op!=phi->op_end();++op)
+        for (auto op = phi->op_begin(); op != phi->op_end(); ++op)
         {
-          if(Function *f=dyn_cast<Function>(op))
+          if (Function *f = dyn_cast<Function>(op))
           {
-            errs()<<f->getName()<<"\n";
+            names.push_back(f->getName());
           }
         }
       }
     }
-    
   }
 
   void handleValue(Value *val)
@@ -301,8 +321,7 @@ struct FuncPtrPass : public ModulePass
     }
     else if (Function *tmp2 = dyn_cast<Function>(val))
     {
-      errs()<<tmp2->getName();
-      //Push(func->getName());
+      names.push_back(tmp2->getName());
     }
     else if (Argument *tmp3 = dyn_cast<Argument>(val))
     {
@@ -310,12 +329,11 @@ struct FuncPtrPass : public ModulePass
     }
   }
 
-
   void handleFunc(Function *func)
   {
-    for (auto bi = func->begin(); bi != func->end();  ++bi)
+    for (auto bi = func->begin(); bi != func->end(); ++bi)
     {
-      for (auto ii = bi->begin(); ii!= bi->end(); ++ii)
+      for (auto ii = bi->begin(); ii != bi->end(); ++ii)
       {
         Instruction *inst = dyn_cast<Instruction>(ii);
         if (ReturnInst *retInst = dyn_cast<ReturnInst>(inst))
@@ -337,8 +355,6 @@ struct FuncPtrPass : public ModulePass
       }
     }
   }
-
-
 };
 
 char FuncPtrPass::ID = 0;
