@@ -72,6 +72,7 @@ struct FuncPtrPass : public ModulePass
 
   map<int, set<string>> results;
   set<string> names;
+  string rescurTmp="";
 
   void printResults()
   {
@@ -163,6 +164,7 @@ struct FuncPtrPass : public ModulePass
                 results[line]=names;
                 names.clear();
               }
+              rescurTmp.clear();
             }
           }
         }
@@ -209,6 +211,7 @@ struct FuncPtrPass : public ModulePass
       }
       else if (auto tmp3 = dyn_cast<Function>(op))
       {
+        int argNum=tmp3->getNumOperands();
         names.insert(tmp3->getName()); 
       }
       else
@@ -232,13 +235,15 @@ struct FuncPtrPass : public ModulePass
   {
     //func trans by args
     unsigned int argIndex = arg->getArgNo();
+  //  unsigned int argNum=arg->
     Function *fParent = arg->getParent();
 
     for (User *funcUser : fParent->users())
     {
       if (CallInst *callInst = dyn_cast<CallInst>(funcUser))
       {
-
+        
+          unsigned int argOpNum=callInst->getNumArgOperands();
           Value *value = callInst->getArgOperand(argIndex);
           if (callInst->getCalledFunction() != fParent)
           { 
@@ -270,12 +275,12 @@ struct FuncPtrPass : public ModulePass
           }
       }
       else if (PHINode *phiNode = dyn_cast<PHINode>(funcUser))
-      {
+      {//func pointer meet in phiNode
         for (User *phiUser : phiNode->users())
         {
           if (CallInst *callInst = dyn_cast<CallInst>(phiUser))
           {
-
+              unsigned int argOpNum=callInst->getNumArgOperands();
               Value *value = callInst->getArgOperand(argIndex);
               handleValue(value);
           }
@@ -287,9 +292,12 @@ struct FuncPtrPass : public ModulePass
   void callCallIns(CallInst *call)
   {
     Function *f_call = call->getCalledFunction();//pointer func type
+    unsigned int argNum=call->getNumOperands();
     if (f_call)
     {
       names.insert(f_call->getName());
+      rescurTmp=f_call->getName();
+    //  names.erase(f_call->getName());
       handleFunc(f_call);
 
     }
@@ -302,6 +310,7 @@ struct FuncPtrPass : public ModulePass
         {
           if (Function *f = dyn_cast<Function>(op))
           {
+            argNum=f->getNumOperands();
             //names.insert(f->getName());
             handleFunc(f);
           }
@@ -312,8 +321,12 @@ struct FuncPtrPass : public ModulePass
 
   void handleValue(Value *val)
   {
+    if(!rescurTmp.empty())
+        names.erase(rescurTmp);
+      rescurTmp.clear();
     if (PHINode *tmp1 = dyn_cast<PHINode>(val))
     {
+      
       callPHINode(tmp1);
     }
     else if (Function *tmp2 = dyn_cast<Function>(val))
