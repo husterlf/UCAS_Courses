@@ -16,10 +16,23 @@
 
 #include <map>
 #include <set>
+#include <string>
+#include <vector>
 
 using namespace std;
 
 using namespace llvm;
+
+///
+/// Dummy class to provide a typedef for the detailed result set
+/// For each basicblock, we compute its input dataflow val and its output dataflow val
+///
+template <class T>
+struct DataflowResult
+{
+    typedef typename std::map<BasicBlock *, std::pair<T, T>> Type;
+    typedef typename std::map<Instruction *, std::pair<T, T>> Ins;
+};
 
 ///Base dataflow visitor class, defines the dataflow function
 
@@ -34,7 +47,7 @@ public:
     /// @block the Basic Block
     /// @dfval the input dataflow value
     /// @isforward true to compute dfval forward, otherwise backward
-    virtual void compDFVal(BasicBlock *block, T *dfval, bool isforward)
+    virtual void compDFVal(BasicBlock *block,typename DataflowResult<T>::Ins *result , bool isforward)
     {
         if (isforward == true)
         {
@@ -42,7 +55,7 @@ public:
                  ii != ie; ++ii)
             {
                 Instruction *inst = &*ii;
-                compDFVal(inst, dfval);
+                compDFVal(inst, result);
             }
         }
         else
@@ -51,7 +64,7 @@ public:
                  ii != ie; ++ii)
             {
                 Instruction *inst = &*ii;
-                compDFVal(inst, dfval);
+                compDFVal(inst, result);
             }
         }
     }
@@ -62,7 +75,7 @@ public:
     /// @inst the Instruction
     /// @dfval the input dataflow value
     /// @return true if dfval changed
-    virtual void compDFVal(Instruction *inst, T *dfval) = 0;
+    virtual void compDFVal(Instruction *inst,typename DataflowResult<T>::Ins *insResult) = 0;
 
     ///
     /// Merge of two dfvals, dest will be ther merged result
@@ -71,16 +84,7 @@ public:
     virtual void merge(T *dest, const T &src) = 0;
 };
 
-///
-/// Dummy class to provide a typedef for the detailed result set
-/// For each basicblock, we compute its input dataflow val and its output dataflow val
-///
-template <class T>
-struct DataflowResult
-{
-    typedef typename std::map<BasicBlock *, std::pair<T, T>> Type;
-    typedef typename std::map<Instruction *, std::pair<T, T>> Ins;
-};
+
 
 ///
 /// Compute a forward iterated fixedpoint dataflow function, using a user-supplied
@@ -121,11 +125,13 @@ void compBackwardDataflow(Function *fn,
     for (Function::iterator bi = fn->begin(); bi != fn->end(); ++bi)
     {
         BasicBlock *bb = &*bi;
-        result->insert(std::make_pair(bb, std::make_pair(initval, initval)));
+        result->insert(std::make_pair(bb, std::make_pair(initval, initval)));//初始化基本块对应的活跃信息
+                                                                            //block的信息对应两条，
         worklist.insert(bb);
     }
 
     // Iteratively compute the dataflow result
+    // 迭代计算数据流的结果
     while (!worklist.empty())
     {
         BasicBlock *bb = *worklist.begin();
@@ -136,17 +142,19 @@ void compBackwardDataflow(Function *fn,
         for (auto si = succ_begin(bb), se = succ_end(bb); si != se; si++)
         {
             BasicBlock *succ = *si;
-            //合并活跃量
             visitor->merge(&bbexitval, (*result)[succ].first);
         }
 
         (*result)[bb].second = bbexitval;
-        visitor->compDFVal(bb, &bbexitval, false);
+        //visitor->compDFVal(bb, &bbexitval, false);//经过bb后的数据变化
 
         // If outgoing value changed, propagate it along the CFG
-        if (bbexitval == (*result)[bb].first)
+        // 输出值变化，沿着控制流图进行更新
+        // 流表示
+        if (bbexitval == (*result)[bb].first)//未发生变化
             continue;
-        (*result)[bb].first = bbexitval;
+        (*result)[bb].first = bbexitval;//bb.first更新，且需要将数据更新到前向的所有基本块
+                                        //前向基本块有闭环也会在该基本块处断开
 
         for (pred_iterator pi = pred_begin(bb), pe = pred_end(bb); pi != pe; pi++)
         {
@@ -178,7 +186,7 @@ void printDataflowResult(raw_ostream &out,
 template <class T>
 void compCallFuncDataflow(Function *fn,
                           DataflowVisitor<T> *visitor,
-                          typename DataflowResult<T>::Type *result,
+                          typename DataflowResult<T>::Ins *result,
                           const T &initval)
 {
 
@@ -188,25 +196,13 @@ void compCallFuncDataflow(Function *fn,
     for (Function::iterator bi = fn->begin(); bi != fn->end(); ++bi)
     {
         BasicBlock *bb = &*bi;
-        result->insert(std::make_pair(bb, std::make_pair(initval, initval)));
         worklist.insert(bb);
-
         for (auto ii = bb->begin(); ii != bb->end(); ++ii)
         {
-            //result->insert(std::make_pair(ii, std::make_pair(initval, initval)));
-            /*if (auto *call_inst = dyn_cast<CallInst>(ii))
-          { //target instruction
-                Value *val=call_inst->getCalledValue();
-                if(auto *func=dyn_cast<Function>(val))
-                {
-                    if(!func->isDeclaration())
-                    errs()<<func->getName()<<"\n";
-                }
-          }*/
+            if(auto inst=dyn_cast<Instruction>(ii))
+                result->insert(std::make_pair(inst, std::make_pair(initval, initval)));
         }
     }
-
-    errs() << "======================\n";
 
     // Iteratively compute the dataflow result
     while (!worklist.empty())
@@ -214,26 +210,29 @@ void compCallFuncDataflow(Function *fn,
         BasicBlock *bb = *worklist.begin();
         worklist.erase(worklist.begin());
 
+        Instruction *bb_first_inst = dyn_cast<Instruction>(bb->begin());
+        Instruction *bb_last_inst = bb->getTerminator();
+        //bb->getTerminator();
         // Merge all incoming value
-        T bbexitval = (*result)[bb].second;
-        for (auto si = succ_begin(bb), se = succ_end(bb); si != se; si++)
-        {
-            BasicBlock *succ = *si;
-            //合并活跃量
-            visitor->merge(&bbexitval, (*result)[succ].first);
-        }
-
-        (*result)[bb].second = bbexitval;
-        visitor->compDFVal(bb, &bbexitval, false);
-
-        // If outgoing value changed, propagate it along the CFG
-        if (bbexitval == (*result)[bb].first)
-            continue;
-        (*result)[bb].first = bbexitval;
-
+        T bbexitval = (*result)[bb_last_inst].second;
         for (pred_iterator pi = pred_begin(bb), pe = pred_end(bb); pi != pe; pi++)
         {
-            worklist.insert(*pi);
+            BasicBlock *p = *pi;
+            Instruction *bpi=dyn_cast<Instruction>(--p->end());
+            visitor->merge(&bbexitval, (*result)[bpi].first);
+        }
+
+        (*result)[bb_first_inst].second = bbexitval;
+        visitor->compDFVal(bb, result, true);
+
+        // If outgoing value changed, propagate it along the CFG
+        if (bbexitval == (*result)[bb_first_inst].first)
+            continue;
+        (*result)[bb_first_inst].first = bbexitval;
+
+        for (succ_iterator si = succ_begin(bb), se = succ_end(bb); si != se; si++)
+        {
+            worklist.insert(*si);
         }
     }
 }

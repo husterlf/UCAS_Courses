@@ -23,14 +23,14 @@ using namespace llvm;
 //借用这个Liveness实现调用函数分析
 struct LivenessInfo
 {
-    //map<Value*,set<Function*>> valFuncList;
-    set<Instruction *> LiveVars; /// Set of variables which are live
+    map<Value *, set<Value *>> valFuncMap; //
+    set<Instruction *> LiveVars;           /// Set of variables which are live
     LivenessInfo() : LiveVars() {}
     LivenessInfo(const LivenessInfo &info) : LiveVars(info.LiveVars) {}
 
     bool operator==(const LivenessInfo &info) const
     {
-        return LiveVars == info.LiveVars;
+        return (LiveVars == info.LiveVars && valFuncMap == info.valFuncMap);
     }
 };
 
@@ -48,13 +48,25 @@ inline raw_ostream &operator<<(raw_ostream &out, const LivenessInfo &info)
 
 class LivenessVisitor : public DataflowVisitor<struct LivenessInfo>
 {
-    std::map<int, std::vector<std::string>> callFuncResults;
-
+    map<int, set<string>> callFuncResults;
+    set<Function*> funcSet;
 public:
     LivenessVisitor() {}
 
+    void insertFuncSet(set<Function*> &fSet)
+    {
+        fSet.insert(funcSet.begin(),funcSet.end());
+    }
+
+    void clearFuncSet()
+    {
+        funcSet.clear();
+    }
+
     void printResult()
     {
+       // callFuncResults[11].insert("foo");
+
         for (auto &it : callFuncResults)
         {
             errs() << it.first << ":";
@@ -63,72 +75,93 @@ public:
             {
                 line_content += (str + ",");
             }
-            line_content.substr(0, line_content.size() - 1);
+            line_content=line_content.substr(0, line_content.size()-1 );
             errs() << line_content << "\n";
         }
     }
     //required func merge
     void merge(LivenessInfo *dest, const LivenessInfo &src) override
     {
-        for (std::set<Instruction *>::const_iterator ii = src.LiveVars.begin(),
+        for (set<Instruction *>::const_iterator ii = src.LiveVars.begin(),
                                                      ie = src.LiveVars.end();
              ii != ie; ++ii)
         {
             dest->LiveVars.insert(*ii);
         }
+
+        for(auto val:src.valFuncMap)
+        {
+            dest->valFuncMap[val.first].insert(val.second.begin(),val.second.end());
+        }
+
     }
 
     //required func compDFVal
-    void compDFVal(Instruction *inst, LivenessInfo *dfval) override
+    void compDFVal(Instruction *inst,DataflowResult<LivenessInfo>::Ins *insResult) override
     {
         if (isa<DbgInfoIntrinsic>(inst))
             return;
 
+        //MemCpyInst,PHINode,CallInst,StoreInst,LoadInst,ReturnInst,GetElementPtrInst,BitCastInst
         if (auto *callInst = dyn_cast<CallInst>(inst))
         {
 
-            errs() << "I am in CallInst"
+            errs() << "CallInst"
                    << "\n";
             Value *value = callInst->getCalledValue();
+
             if (auto *func = dyn_cast<Function>(value))
-            {
-                errs() << "Function\n";
+            { //函数直接调用
+                int line=callInst->getDebugLoc().getLine();
+                callFuncResults[line].insert(func->getName());
             }
             else
             {
-                set<Value *> value_worklist;
-                /*if (dfval.LiveVars_map.count(value))
-                {
-                    value_worklist.insert(dfval.LiveVars_map[value].begin(), dfval.LiveVars_map[value].end());
-                }
 
-                while (!value_worklist.empty())
-                {
-                    Value *v = *(value_worklist.begin());
-                    value_worklist.erase(value_worklist.begin());
-                    if (auto *func = dyn_cast<Function>(v))
-                    {
-                        callees.insert(func);
-                    }
-                    else
-                    {
-                        value_worklist.insert(dfval.LiveVars_map[v].begin(), dfval.LiveVars_map[v].end());
-                    }
-                    //前向访问找到所有的func
-                }*/
             }
         }
-
-        dfval->LiveVars.erase(inst);
-        for (User::op_iterator oi = inst->op_begin(), oe = inst->op_end();
-             oi != oe; ++oi)
+        else if (auto *tmp = dyn_cast<MemCpyInst>(inst))
         {
-            Value *val = *oi;
-            if (isa<Instruction>(val))
-            {
-                dfval->LiveVars.insert(cast<Instruction>(val));
-            }
+            errs() << "MemCpyInst"
+                   << "\n";
         }
+        else if (auto *tmp = dyn_cast<PHINode>(inst))
+        {
+            errs() << "PHINode"
+                   << "\n";
+        }
+        else if (auto *tmp = dyn_cast<StoreInst>(inst))
+        {
+            errs() << "StoreInst"
+                   << "\n";
+        }
+        else if (auto *tmp = dyn_cast<LoadInst>(inst))
+        {
+            errs() << "LoadInst"
+                   << "\n";
+        }
+        else if (auto *tmp = dyn_cast<ReturnInst>(inst))
+        {
+            errs() << "ReturnInst"
+                   << "\n";
+        }
+        else if (auto *tmp = dyn_cast<GetElementPtrInst>(inst))
+        {
+            errs() << "GetElementPtrInst"
+                   << "\n";
+        }
+        else if (auto *tmp = dyn_cast<BitCastInst>(inst))
+        {
+            errs() << "BitCastInst"
+                   << "\n";
+        }
+        else
+        {
+            errs() << "Other Inst"
+                   << "\n";
+            /* code */
+        }
+
     }
 };
 

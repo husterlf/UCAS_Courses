@@ -59,7 +59,6 @@ struct FuncPtrPass : public ModulePass
     bool runOnModule(Module &M) override
     {
         LivenessVisitor visitor;
-        DataflowResult<LivenessInfo>::Type result;
         DataflowResult<LivenessInfo>::Ins insResult;
         //返回信息为 上下文不敏感的、域不敏感的 函数调用
 
@@ -69,24 +68,24 @@ struct FuncPtrPass : public ModulePass
             if (!F.isIntrinsic())
             {
                 funcList.insert(&F);
+                errs() << F.getName() << "\n";
             }
         }
 
         while (!funcList.empty())
         {
-            Function *func=*funcList.begin();
+            Function *func = *funcList.begin();
             funcList.erase(func);
             LivenessInfo initval;
-            compCallFuncDataflow(func, &visitor, &result, initval);
+            // compCallFuncDataflow(func, &visitor, &result, initval);
+            compCallFuncDataflow(func, &visitor, &insResult, initval);
 
             //往funclist中加入func
-
+            visitor.insertFuncSet(funcList);
+            visitor.clearFuncSet();
         }
-        
-
 
         visitor.printResult();
-        //printDataflowResult<LivenessInfo>(errs(), result);
         return false;
     }
 };
