@@ -53,38 +53,36 @@ char EnableFunctionOptPass::ID = 0;
 ///!TODO TO BE COMPLETED BY YOU FOR ASSIGNMENT 3
 struct FuncPtrPass : public ModulePass
 {
+    DataflowResult<LivenessInfo>::Ins result;
+    set<Function *> funcList;
     static char ID; // Pass identification, replacement for typeid
     FuncPtrPass() : ModulePass(ID) {}
 
     bool runOnModule(Module &M) override
     {
-        LivenessVisitor visitor;
-        DataflowResult<LivenessInfo>::Ins insResult;
-        //返回信息为 上下文不敏感的、域不敏感的 函数调用
-
-        set<Function *> funcList;
+        string mName=M.getName();
+        cout<<"Module Name:"<<mName<<"\n";
         for (auto &F : M)
         {
             if (!F.isIntrinsic())
             {
                 funcList.insert(&F);
-                errs() << F.getName() << "\n";
             }
         }
 
+        LivenessVisitor visitor;
+       // visitor.setDataFlowPtr(&result);
         while (!funcList.empty())
         {
-            Function *func = *funcList.begin();
-            funcList.erase(func);
-            LivenessInfo initval;
-            // compCallFuncDataflow(func, &visitor, &result, initval);
-            compCallFuncDataflow(func, &visitor, &insResult, initval);
+            LivenessInfo initval;//初始化信息
+            Function *func = *(funcList.begin());
+            funcList.erase(funcList.begin());
 
-            //往funclist中加入func
+            compCallFuncDataflow(func, &visitor,&result, initval);
+
             visitor.insertFuncSet(funcList);
             visitor.clearFuncSet();
         }
-
         visitor.printResult();
         return false;
     }
@@ -118,9 +116,9 @@ int main(int argc, char **argv)
     }
 
     llvm::legacy::PassManager Passes;
-#if LLVM_VERSION_MAJOR == 5
+//#if LLVM_VERSION_MAJOR == 5
     Passes.add(new EnableFunctionOptPass());
-#endif
+//#endif
     ///Transform it to SSA
     Passes.add(llvm::createPromoteMemoryToRegisterPass());
 
@@ -129,6 +127,6 @@ int main(int argc, char **argv)
     Passes.add(new FuncPtrPass());
     Passes.run(*M.get());
 #ifndef NDEBUG
-    system("pause");
+    //system("pause");
 #endif
 }
